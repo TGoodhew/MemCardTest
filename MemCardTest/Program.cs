@@ -22,6 +22,11 @@ namespace MemCardTest
         private const string CompareName = "Compare MEM and Card";
         private const string Exit = "Exit";
 
+        // Not in the interactive menu — only reachable via the "probe-card"
+        // CLI command. Kept as a const so the dispatcher and CLI table share
+        // a single source of truth.
+        private const string ProbeCardName = "Probe Card";
+
         // CLI command name -> menu display name so the same Handle() dispatch
         // serves both interactive and CLI mode. Adding a menu item only requires
         // adding a constant above and an entry here.
@@ -36,7 +41,7 @@ namespace MemCardTest
             { "copy-to-card",   CopyMassToFram },
             { "copy-from-card", CopyFramToMass },
             { "compare",        CompareName },
-            { "probe-card",     "Probe Card" },
+            { "probe-card",     ProbeCardName },
         };
 
         private const string Resource8563E = "GPIB0::18::INSTR";
@@ -229,7 +234,7 @@ namespace MemCardTest
                 case CompareName:
                     CompareCatalogs();
                     break;
-                case "Probe Card":
+                case ProbeCardName:
                     ProbeCard();
                     break;
                 default:
@@ -264,21 +269,7 @@ namespace MemCardTest
                 string text = null;
                 AnsiConsole.Status().Start(
                     $"Reading catalog from {label}...",
-                    _ =>
-                    {
-                        // Selected Device Clear flushes any stale data left in the
-                        // analyzer's output buffer from a prior failed command, so we
-                        // don't read someone else's leftovers as our catalog response.
-                        _session.Clear();
-
-                        // 85620A: select the storage device, then request a directory listing.
-                        // Sent as two separate writes to match the manual's BASIC example (p.4-48).
-                        // CATALOG? returns "<entry>,<entry>,...<LF>BYTES FREE n<LF+EOI>".
-                        // The listing can exceed any single VISA buffer, so loop until END.
-                        _session.FormattedIO.WriteLine($"MSDEV {device};");
-                        _session.FormattedIO.WriteLine("CATALOG?;");
-                        text = ReadUntilEnd();
-                    });
+                    _ => text = ReadCatalog(device));
 
                 Log.Info($"Catalog {label} returned {text?.Length ?? 0} bytes.");
                 RenderCatalog(label, text);
@@ -303,13 +294,7 @@ namespace MemCardTest
                 string memRaw = null;
                 AnsiConsole.Status().Start(
                     "Reading Mass Memory Module catalog...",
-                    _ =>
-                    {
-                        _session.Clear();
-                        _session.FormattedIO.WriteLine("MSDEV MEM;");
-                        _session.FormattedIO.WriteLine("CATALOG?;");
-                        memRaw = ReadUntilEnd();
-                    });
+                    _ => memRaw = ReadCatalog("MEM"));
 
                 var memFiles = ExtractFilenamesWithSizes(memRaw);
                 if (memFiles.Length == 0)
@@ -370,25 +355,13 @@ namespace MemCardTest
                 string memRaw = null;
                 AnsiConsole.Status().Start(
                     "Reading Mass Memory Module catalog...",
-                    _ =>
-                    {
-                        _session.Clear();
-                        _session.FormattedIO.WriteLine("MSDEV MEM;");
-                        _session.FormattedIO.WriteLine("CATALOG?;");
-                        memRaw = ReadUntilEnd();
-                    });
+                    _ => memRaw = ReadCatalog("MEM"));
 
                 Log.Info("Compare: cataloging CARD.");
                 string cardRaw = null;
                 AnsiConsole.Status().Start(
                     "Reading FRAM Card catalog...",
-                    _ =>
-                    {
-                        _session.Clear();
-                        _session.FormattedIO.WriteLine("MSDEV CARD;");
-                        _session.FormattedIO.WriteLine("CATALOG?;");
-                        cardRaw = ReadUntilEnd();
-                    });
+                    _ => cardRaw = ReadCatalog("CARD"));
 
                 // Normalise both sides to LIF card-form so comparisons are
                 // apples-to-apples — module names can be longer/mixed-case
@@ -466,13 +439,7 @@ namespace MemCardTest
                 string raw = null;
                 AnsiConsole.Status().Start(
                     "Reading card info...",
-                    _ =>
-                    {
-                        _session.Clear();
-                        _session.FormattedIO.WriteLine("MSDEV CARD;");
-                        _session.FormattedIO.WriteLine("CATALOG?;");
-                        raw = ReadUntilEnd();
-                    });
+                    _ => raw = ReadCatalog("CARD"));
 
                 // Pull just the BYTES FREE marker and the file count from the
                 // catalog response — that's what tells us the actual usable
@@ -619,13 +586,7 @@ namespace MemCardTest
                 string catRaw = null;
                 AnsiConsole.Status().Start(
                     "Reading Mass Memory Module catalog...",
-                    _ =>
-                    {
-                        _session.Clear();
-                        _session.FormattedIO.WriteLine("MSDEV MEM;");
-                        _session.FormattedIO.WriteLine("CATALOG?;");
-                        catRaw = ReadUntilEnd();
-                    });
+                    _ => catRaw = ReadCatalog("MEM"));
 
                 var files = ExtractFilenamesWithSizes(catRaw);
                 var totalBytes = files.Sum(f => f.Size);
@@ -708,51 +669,55 @@ namespace MemCardTest
 
                 AnsiConsole.MarkupLine($"[green]Done.[/] Sent CARDSTORE for [yellow]{files.Length}[/] file(s), [yellow]{runningBytes:N0}[/] bytes.");
 
-                // BUG: this verification is UNRELIABLE on cards with more than
-                // ~55 files. The 85620A firmware truncates CATALOG? on CARD at
-                // ~903 bytes (one output buffer), then asserts EOI. Subsequent
-                // CARDSTOREs land on the card fine but never show up in this
-                // listing, so the "missing from card" report below will lie.
-                // We confirmed via per-name CARDLOAD probes (probe-card command)
-                // that the card actually held 240 files when CATALOG? returned
-                // 55 — the writes were succeeding all along.
+                // KNOWN BUG (85620A on 8563E, root cause not yet pinned down —
+                // could be analyzer firmware, the GPIB driver, or this code):
+                // CATALOG? on CARD truncates its response at ~903 bytes (one
+                // analyzer output buffer) and asserts EOI mid-listing. On a
+                // card with more than ~55 files the catalog reports only the
+                // first ~55 — but CARDSTOREs for the un-listed files DID land
+                // on the card and are readable. Confirmed empirically: a card
+                // showing 55 entries via CATALOG? returned ERR 0 from CARDLOAD
+                // for all 240 files actually present.
                 //
-                // Suggested fix: replace this CATALOG?-based verification with
-                // a per-source-name CARDLOAD probe loop (CARDLOAD %name%; DONE?;
-                // ERR?;). ERR 0 = present, ERR 855 = absent. The downside is
-                // it reloads each file into module RAM as a side effect — so
-                // afterwards we'd need to either snapshot MEM contents up front
-                // and DISPOSE the newly-loaded files, or accept the MEM
-                // pollution and surface a warning. ProbeCard() is the existing
-                // template for the loop.
+                // WORKAROUND: don't use CATALOG? to verify. Probe each source
+                // name individually with CARDLOAD %name%; DONE?; ERR?; — ERR 0
+                // means present, ERR 855 means absent. No truncation limit
+                // because each probe is its own request/response cycle.
                 //
-                // Step 3: verify by re-cataloging the card and confirming each
-                // source name landed. Card filenames are LIF-mangled (max 9-char
-                // base, uppercase) per manual p.4-45, so normalise both sides
-                // through ToCardFileName before comparing.
-                string verifyRaw = null;
-                AnsiConsole.Status().Start(
-                    "Verifying card contents...",
-                    _ =>
+                // Side effect of the workaround: CARDLOAD reloads each file
+                // into module RAM. That's benign here because every probed
+                // name came from MEM in this same operation, so we're just
+                // overwriting MEM entries with byte-identical content.
+                // ProbeCard() is the standalone version of this loop.
+                //
+                // See also: catalog_card_truncation.md memory note. Tony to
+                // verify in HTBasic whether the truncation is reproducible
+                // outside this program (i.e. firmware vs. driver issue).
+                var probeResults = new Dictionary<string, string>(StringComparer.Ordinal);
+                AnsiConsole.Progress().Start(ctx =>
+                {
+                    var task = ctx.AddTask("[yellow]Verifying[/] [grey](starting)[/]");
+                    task.MaxValue = perFile.Count;
+
+                    foreach (var p in perFile)
                     {
-                        _session.Clear();
-                        _session.FormattedIO.WriteLine("MSDEV CARD;");
-                        _session.FormattedIO.WriteLine("CATALOG?;");
-                        verifyRaw = ReadUntilEnd();
-                    });
+                        task.Description = $"[yellow]Verifying[/] {Markup.Escape(p.Name)}";
 
-                RenderCatalog("FRAM Card", verifyRaw);
+                        _session.FormattedIO.WriteLine($"CARDLOAD %{p.Name}%;");
+                        _session.FormattedIO.WriteLine("DONE?;");
+                        _session.FormattedIO.ReadLine();
+                        _session.FormattedIO.WriteLine("ERR?;");
+                        var probeErr = _session.FormattedIO.ReadLine().Trim();
 
-                var cardNames = ExtractCardFileNames(verifyRaw)
-                    .Select(ToCardFileName)
-                    .ToArray();
-
-                bool OnCard(string sourceName) =>
-                    cardNames.Contains(ToCardFileName(sourceName), StringComparer.OrdinalIgnoreCase);
+                        probeResults[p.Name] = probeErr;
+                        Log.Info($"  Verify CARDLOAD {p.Name} -> ERR {probeErr}");
+                        task.Increment(1);
+                    }
+                });
 
                 var missing = perFile
-                    .Where(p => !OnCard(p.Name))
-                    .Select(p => p.Name)
+                    .Where(p => probeResults[p.Name] != "0")
+                    .Select(p => $"{p.Name} (probe ERR {probeResults[p.Name]})")
                     .ToArray();
 
                 var errored = perFile
@@ -760,12 +725,12 @@ namespace MemCardTest
                     .Select(p => $"{p.Name} (ERR {p.Err})")
                     .ToArray();
 
-                // Per-file summary table to the log: filename | size | ERR | OnCard | bytesFree (when checkpointed).
+                // Per-file summary to the log: filename | size | CARDSTORE ERR | probe ERR | bytesFree (when checkpointed).
                 Log.Info("=== Copy MEM -> CARD per-file summary ===");
                 foreach (var p in perFile)
                 {
                     var bf = p.BytesFree.HasValue ? $" | bytesFree={p.BytesFree.Value}" : string.Empty;
-                    Log.Info($"  {p.Name} | size={p.Size} | ERR={p.Err} | OnCard={OnCard(p.Name)}{bf}");
+                    Log.Info($"  {p.Name} | size={p.Size} | ERR={p.Err} | probe={probeResults[p.Name]}{bf}");
                 }
                 Log.Info($"Totals: {perFile.Count} attempted, " +
                          $"{errored.Length} with ERR, " +
@@ -804,10 +769,7 @@ namespace MemCardTest
             // card writes, so this doubles as a sync flush. Returns null if
             // the response can't be parsed (which usually means the card
             // wasn't responding for some reason).
-            _session.Clear();
-            _session.FormattedIO.WriteLine("MSDEV CARD;");
-            _session.FormattedIO.WriteLine("CATALOG?;");
-            var raw = ReadUntilEnd();
+            var raw = ReadCatalog("CARD");
 
             var line = (raw ?? string.Empty)
                 .Replace("\r", string.Empty)
@@ -917,9 +879,34 @@ namespace MemCardTest
             return baseName + ext;
         }
 
+        private static string ReadCatalog(string device)
+        {
+            // Selected Device Clear flushes any stale data left in the analyzer's
+            // output buffer from a prior failed command, so we don't read someone
+            // else's leftovers as our catalog response.
+            //
+            // 85620A: select the storage device (MEM or CARD), then request the
+            // directory listing as two separate writes — matches the manual's
+            // BASIC example (p.4-48). The response shape is
+            //   <entry>,<entry>,...<LF>BYTES FREE n<LF+EOI>
+            // and may exceed any single VISA buffer, so ReadUntilEnd loops until
+            // END plus a brief drain for paginated chunks.
+            _session.Clear();
+            _session.FormattedIO.WriteLine($"MSDEV {device};");
+            _session.FormattedIO.WriteLine("CATALOG?;");
+            return ReadUntilEnd();
+        }
+
         private static string ReadUntilEnd()
         {
             const int chunkSize = 4096;
+
+            // Defensive cap on the first read loop. A real catalog response is
+            // well under 64 KB; if we've buffered 1 MB without seeing END, the
+            // analyzer is wedged or we're misreading some unrelated transfer.
+            // Bail loudly rather than spin until the user kills the process.
+            const int maxResponseBytes = 1_048_576;
+
             var sb = new StringBuilder();
 
             // First read: wait up to the session's configured timeout for the
@@ -931,6 +918,12 @@ namespace MemCardTest
                 chunkNum++;
                 var chunk = _session.RawIO.ReadString(chunkSize, out status);
                 sb.Append(chunk);
+                if (sb.Length > maxResponseBytes)
+                {
+                    Log.Error($"ReadUntilEnd: aborting after {sb.Length} bytes without END.");
+                    throw new InvalidOperationException(
+                        $"Analyzer sent {sb.Length:N0} bytes without asserting END (cap {maxResponseBytes:N0}).");
+                }
             } while (status != ReadStatus.EndReceived);
 
             // After the first END the analyzer may continue with more EOI-
