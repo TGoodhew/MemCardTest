@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using Ivi.Visa;
-using NationalInstruments.Visa;
 using Spectre.Console;
 
 namespace MemCardTest
@@ -59,8 +58,7 @@ namespace MemCardTest
         // — the analyzer either has more to say within that window or it's done.
         private const int CatalogDrainTimeoutMs = 2000;
 
-        private static ResourceManager _rm;
-        private static MessageBasedSession _session;
+        private static IMessageBasedSession _session;
 
         private static int Main(string[] args)
         {
@@ -111,7 +109,6 @@ namespace MemCardTest
             finally
             {
                 _session?.Dispose();
-                _rm?.Dispose();
                 Log.Close();
             }
         }
@@ -502,7 +499,7 @@ namespace MemCardTest
             // below) will return it to remote automatically.
             try
             {
-                if (_session is GpibSession gpib)
+                if (_session is IGpibSession gpib)
                 {
                     gpib.SendRemoteLocalCommand(GpibInstrumentRemoteLocalMode.GoToLocal);
                     Log.Info("Sent GoToLocal to analyzer.");
@@ -1060,15 +1057,11 @@ namespace MemCardTest
             try
             {
                 Log.Info($"ConnectTo8563E: opening {Resource8563E}.");
-                if (_rm == null)
-                {
-                    _rm = new ResourceManager();
-                }
-
                 _session?.Dispose();
 
                 AnsiConsole.MarkupLine($"[grey]Opening[/] [cyan]{Resource8563E}[/] [grey]...[/]");
-                _session = (MessageBasedSession)_rm.Open(Resource8563E);
+                _session = (IMessageBasedSession)GlobalResourceManager.Open(Resource8563E);
+                Log.Info($"ConnectTo8563E: VISA implementation {_session.ResourceManufacturerName} {_session.ResourceImplementationVersion}.");
                 _session.TimeoutMilliseconds = 5000;
                 _session.TerminationCharacterEnabled = true;
 

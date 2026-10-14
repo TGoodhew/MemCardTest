@@ -19,11 +19,12 @@ probe individual filenames on the card without going through CATALOG?.
 ## Prerequisites
 
 - Windows
-- .NET Framework 4.7.2
-- NI-VISA installed (the project references `Ivi.Visa.dll` and
-  `NationalInstruments.Visa.dll` from the IVI Foundation install — see the
-  `HintPath` entries in [MemCardTest.csproj](MemCardTest/MemCardTest.csproj)
-  and adjust if your VISA install lives elsewhere)
+- .NET 10 SDK
+- NI-VISA installed, including its VISA.NET support for .NET 6+ (tested with
+  NI-VISA 26.5). The project references the `IviFoundation.Visa` NuGet
+  package; at runtime `GlobalResourceManager` loads the NI implementation from
+  `C:\Program Files\IVI Foundation\VISA\Microsoft.NET\VendorAssemblies`. The
+  vendor and version in use are logged on connect.
 
 ## Build
 
@@ -43,7 +44,7 @@ from the CLI.
 Run with no arguments and pick from the list:
 
 ```powershell
-.\MemCardTest\bin\Debug\net472\MemCardTest.exe
+.\MemCardTest\bin\Debug\net10.0\MemCardTest.exe
 ```
 
 ### CLI
