@@ -1,0 +1,36 @@
+# Builds the solution with Visual Studio 2022's MSBuild (17.x) so we catch
+# changes that would stop it opening/building in VS 2022 (e.g. retargeting to
+# .NET 10). NI-VISA isn't installed on the runner; that's fine because the
+# project only references the IviFoundation.Visa NuGet package and the NI
+# implementation is loaded at runtime on `connect`.
+name: Build (VS 2022)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use VS 2022 MSBuild
+        uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: '[17.0,18.0)'
+
+      - name: Show toolchain
+        run: |
+          msbuild -version
+          dotnet --list-sdks
+
+      - name: Build
+        run: msbuild MemCardTest.sln -restore -p:Configuration=Debug -v:minimal
+
+      # Startup check only: --help doesn't touch VISA, so it runs without
+      # NI-VISA or GPIB hardware.
+      - name: Smoke test
+        run: .\MemCardTest\bin\Debug\net8.0\MemCardTest.exe --help
