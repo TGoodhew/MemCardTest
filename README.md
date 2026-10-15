@@ -19,8 +19,9 @@ probe individual filenames on the card without going through CATALOG?.
 ## Prerequisites
 
 - Windows
-- .NET 8 SDK or later (the project targets `net8.0` so it builds in Visual
-  Studio 2022)
+- .NET 8 SDK (the project targets `net8.0` so it builds in Visual Studio
+  2022). A newer SDK can build it, but the .NET 8 runtime must still be
+  installed to run it.
 - NI-VISA installed, including its VISA.NET support for .NET 6+ (tested with
   NI-VISA 26.5). The project references the `IviFoundation.Visa` NuGet
   package; at runtime `GlobalResourceManager` loads the NI implementation from
