@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 
 $root = $PSScriptRoot
 $proj = Join-Path $root 'MemCardTest\MemCardTest.csproj'
-$exe  = Join-Path $root 'MemCardTest\bin\Debug\net10.0\MemCardTest.exe'
+$exe  = Join-Path $root 'MemCardTest\bin\Debug\net8.0\MemCardTest.exe'
 
 dotnet build $proj -c Debug
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

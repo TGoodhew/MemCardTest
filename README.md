@@ -19,7 +19,9 @@ probe individual filenames on the card without going through CATALOG?.
 ## Prerequisites
 
 - Windows
-- .NET 10 SDK
+- .NET 8 SDK (the project targets `net8.0` so it builds in Visual Studio
+  2022). A newer SDK can build it, but the .NET 8 runtime must still be
+  installed to run it.
 - NI-VISA installed, including its VISA.NET support for .NET 6+ (tested with
   NI-VISA 26.5). The project references the `IviFoundation.Visa` NuGet
   package; at runtime `GlobalResourceManager` loads the NI implementation from
@@ -32,7 +34,7 @@ probe individual filenames on the card without going through CATALOG?.
 dotnet build
 ```
 
-Or open [MemCardTest.sln](MemCardTest.sln) in Visual Studio.
+Or open [MemCardTest.sln](MemCardTest.sln) in Visual Studio 2022 or later.
 
 ## Usage
 
@@ -44,7 +46,7 @@ from the CLI.
 Run with no arguments and pick from the list:
 
 ```powershell
-.\MemCardTest\bin\Debug\net10.0\MemCardTest.exe
+.\MemCardTest\bin\Debug\net8.0\MemCardTest.exe
 ```
 
 ### CLI
